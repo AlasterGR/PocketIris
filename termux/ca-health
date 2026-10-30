@@ -1,0 +1,39 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux health (read-only): compare installed versions and Termux packages with the known-good list (compat.json) and show
+# waiting package updates. Exit 0 when everything matches, 1 when something differs, 2 when the known-good list is missing.
+export PATH="$HOME/bin:$PATH"
+compat=/sdcard/Documents/ca/compat.json
+#  Without the known-good list there is nothing to compare with.
+if [ ! -f "$compat" ]; then echo "The known-good list $compat is missing; the PC smoke test or deploy puts it there."; exit 2; fi
+
+#  Record the versions fresh, then list the Termux packages the list names (dpkg only reads; nothing is changed).
+ca-versions > /dev/null 2>&1
+pkgs=$(dpkg-query -W -f='${Package}=${Version}\n' 2>/dev/null)
+
+COMPAT="$compat" VERSIONS="$HOME/pocketiris-versions.json" PKGS="$pkgs" APK="${TERMUX_APK_RELEASE:-}" node -e '
+const fs = require("fs");
+const good = JSON.parse(fs.readFileSync(process.env.COMPAT, "utf8")).knownGood;
+let have = {};
+//  A missing versions file only means those lines show as unknown.
+try { have = JSON.parse(fs.readFileSync(process.env.VERSIONS, "utf8")); } catch (e) { have = {}; }
+const pkgs = Object.fromEntries(process.env.PKGS.split("\n").filter(Boolean).map((l) => l.split("=")));
+let differ = 0;
+/** Prints one comparison line and counts a difference. */
+function line(name, now, want) {
+  const ok = now === want;
+  if (!ok) differ++;
+  console.log(`${ok ? "OK  " : "DIFF"}  ${name.padEnd(22)} ${String(now || "unknown").padEnd(24)} known good: ${want}`);
+}
+for (const key of ["claudeCode", "node", "npm", "yep", "termux", "ttyd", "openssh"]) line(key, have[key], good[key]);
+for (const [name, want] of Object.entries(good.termuxPackages || {})) line("package " + name, pkgs[name], want);
+//  Termux says itself where it came from; the add-on apps are checked from the PC (tools\termux-health.ps1), which can see signing keys.
+if (good.termuxApps) line("Termux app source", process.env.APK, good.termuxApps.source);
+console.log(differ ? `\n${differ} difference(s) from the known-good list.` : "\nEverything matches the known-good list.");
+process.exitCode = differ ? 1 : 0;
+'
+result=$?
+
+#  Show waiting updates from the package list Termux already has (no download; pkg upgrade stays a deliberate step).
+waiting=$(apt list --upgradable 2>/dev/null | grep -c upgradable)
+echo "Package updates waiting (from the last package-list refresh): $waiting. To install them deliberately, run pkg-upgrade.sh from Scripts."
+exit $result

@@ -1,0 +1,6 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Stop the server, then start it again.
+#  Stop the server and say so, or say that it was not running.
+pkill -f '[y]epanywhere/dist/cli.js' && echo "stopped" || echo "was not running"
+sleep 2
+"$HOME/bin/ca-start"

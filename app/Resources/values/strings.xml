@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">PocketIris</string>
+    <string name="a11y_description">Lets Claude read the screen and tap, type and scroll in other apps, but only after you approve each app, and only while the “Phone control” switch in PocketIris settings is on. Passwords, the Settings app, permission screens and PocketIris itself are never touched.</string>
+</resources>

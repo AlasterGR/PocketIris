@@ -1,0 +1,20 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# One-time: install sshd in Termux, key login only, listening on 127.0.0.1:8022 (reach it from the PC with: adb forward tcp:8022 tcp:8022).
+set -e
+pkg install -y openssh
+mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+cp /sdcard/Documents/ca/ca-pc.pub "$HOME/.ssh/authorized_keys"; chmod 600 "$HOME/.ssh/authorized_keys"
+cat > "$PREFIX/etc/ssh/sshd_config" <<'CFG'
+Port 8022
+ListenAddress 127.0.0.1
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+Subsystem sftp /data/data/com.termux/files/usr/libexec/sftp-server
+CFG
+pkill sshd 2>/dev/null || true
+sshd
+#  Make sshd start at boot together with the rest, unless that is already set up.
+grep -q 'sshd' "$HOME/.termux/boot/claude-android" || echo 'pgrep sshd >/dev/null || sshd' >> "$HOME/.termux/boot/claude-android"
+echo "sshd listening: $(ss -ltn 2>/dev/null | grep 8022 || netstat -ltn | grep 8022)"

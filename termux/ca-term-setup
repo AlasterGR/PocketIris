@@ -1,0 +1,7 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# One-time: install ttyd (the in-app terminal) and refresh the ca-* commands, then start everything.
+set -e
+pkg install -y ttyd
+mkdir -p /sdcard/Documents/ca/scripts
+bash /sdcard/Documents/ca/install.sh
+echo "ttyd: $(command -v ttyd)"

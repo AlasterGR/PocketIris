@@ -1,0 +1,18 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Make sure PocketIris's sidecar (notifications and trash, ca-sidecar.cjs) is running with the key the app handed over in CA_SIDECAR_TOKEN.
+# Does nothing when it already runs with that key and that version of the program, and restarts it when the key or the program changed. Run by the app and by ca-start.
+f="$HOME/.ca-sidecar-token"
+sumfile="$HOME/.ca-sidecar-sum"
+current_sum=$(cksum < "$HOME/bin/ca-sidecar.cjs")
+running=$(pgrep -f 'ca-sidecar\.cjs' | head -1)
+#  Use the key from the app, or else the one saved last time; without any key nothing safe can be served.
+token="${CA_SIDECAR_TOKEN:-$(cat "$f" 2>/dev/null)}"
+[ -n "$token" ] || exit 0
+#  Nothing to do when it runs with the same key and the same version of the program.
+if [ -n "$running" ] && [ "$(cat "$f" 2>/dev/null)" = "$token" ] && [ "$(cat "$sumfile" 2>/dev/null)" = "$current_sum" ]; then exit 0; fi
+#  Stop an older copy (for example one that was started with another key, or before the program was updated).
+[ -n "$running" ] && pkill -f 'ca-sidecar\.cjs' && sleep 1
+( umask 077; printf '%s' "$token" > "$f" )
+printf '%s' "$current_sum" > "$sumfile"
+CA_SIDECAR_TOKEN="$token" nohup node "$HOME/bin/ca-sidecar.cjs" >> "$HOME/sidecar.log" 2>&1 < /dev/null &
+echo "sidecar started"

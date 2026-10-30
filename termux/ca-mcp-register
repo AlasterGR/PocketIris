@@ -1,0 +1,21 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Tell Claude how to reach the app's tool server, using the secret key the app handed over in CA_MCP_TOKEN.
+# Run by ca-start every time the app starts the server. Does nothing when Claude already has this exact key.
+#  Do nothing when the app gave no key (for example when this is run by hand).
+[ -n "${CA_MCP_TOKEN:-}" ] || exit 0
+f="$HOME/.ca-mcp-token"
+claude_bin="${PREFIX:-/data/data/com.termux/files/usr}/bin/claude"
+#  Skip the work when the saved key is the same and Claude already knows the server.
+if [ "$(cat "$f" 2>/dev/null)" = "$CA_MCP_TOKEN" ] && grep -q '"phone-browser"' "$HOME/.claude.json" 2>/dev/null; then
+  echo "phone-browser already registered with the current key"
+  exit 0
+fi
+"$claude_bin" mcp remove --scope user phone-browser >/dev/null 2>&1
+#  Register the server with the key; remember the key only when that worked.
+if "$claude_bin" mcp add --scope user --transport http phone-browser http://127.0.0.1:3401/mcp --header "Authorization: Bearer $CA_MCP_TOKEN" >/dev/null 2>&1; then
+  ( umask 077; printf '%s' "$CA_MCP_TOKEN" > "$f" )
+  echo "registered phone-browser with the current key (restart Claude sessions to use it)"
+else
+  echo "could not register phone-browser"
+  exit 1
+fi

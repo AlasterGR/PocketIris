@@ -1,0 +1,81 @@
+THE FOUR WAYS TO LINK THE PHONE TO THIS PC (read this first)
+==============================================================
+  1. USB cable            Nothing to set up. Fastest.
+  2. Wi-Fi                Phone and PC on the same Wi-Fi. No Bluetooth, no Windows click.
+  3. Wi-Fi + Bluetooth    The traffic goes over the Bluetooth network; the phone must also be on some Wi-Fi. One Windows click.
+  4. Bluetooth only       Bluetooth network only. Needs adb's classic port 5555, which the PC script opens through the USB cable
+                          once after every phone restart.
+
+How to use any of them (no commands to remember)
+  Phone:  PocketIris tab > Developer > "Connect to another device by" > pick the mode.
+          It asks Allow/Deny and then your lock screen. It is always Off again after the app restarts. "Off" restores everything.
+  PC:     the background watcher opens a PowerShell window by itself and connects. If you prefer: double-click the Desktop shortcut
+          "PocketIris Link" and press 1 (Wi-Fi), 2 (Wi-Fi + Bluetooth), 3 (Bluetooth only) or 4 (Off, back to USB).
+  Under the hood: tools\phone-link.ps1 -Mode wifi|wifibt|bt [-Smoke]   (bt-debug.ps1 is the old name for the Wi-Fi + Bluetooth mode)
+
+Status: all four were tested end to end on the POCO F5 (smoke test 8/8). Bluetooth only was proven with no cable AND the phone's
+Wi-Fi switched off (the phone itself reported Wi-Fi off, adb was connected to the Bluetooth address on port 5555).
+Note for Bluetooth only without Wi-Fi: the doorbell travels over Wi-Fi, so with Wi-Fi off the PC watcher cannot hear it. Double-click
+the Desktop shortcut "PocketIris Link" and press 3 instead.
+The rest of this file describes the Bluetooth parts in detail.
+
+DEBUGGING THE PHONE OVER BLUETOOTH (no cable)
+==============================================
+
+What it does
+  One switch in the app and one command on the PC give the PC full adb access to the phone over Bluetooth: install, push, pull,
+  logcat, shell, the page inspector (cdp.ps1) and the smoke test, exactly as over USB. It is slower than USB (a 5 MB file takes
+  about 35 seconds) and Bluetooth range applies.
+
+How it works (and why it is built this way)
+  Bluetooth tethering gives the PC and the phone a small network over Bluetooth, and adb runs over any network ("Wireless
+  debugging"). There is deliberately no custom Bluetooth bridge: Android's own authenticated adb is the only way in.
+
+One-time setup
+  1. Pair the phone with the PC (Windows Bluetooth settings), once.
+  2. Grant the app its one permission, once (needs the USB cable the first time; on Xiaomi also switch on
+     Developer options > "USB debugging (Security settings)"):
+        adb shell pm grant io.github.alastergr.pocketiris android.permission.WRITE_SECURE_SETTINGS
+  3. Phone: switch on PocketIris's accessibility service (Android Settings > Accessibility > PocketIris phone control). The app
+     needs it only to flip the Bluetooth tethering switch for you. Without it, switch tethering on yourself.
+
+Easiest way (set up once, then nothing to remember)
+  - On the phone, switch "Bluetooth debugging" On (Allow, then your lock check). That is all you do on the phone.
+  - The PC notices by itself: the phone sends a small "doorbell" message over Wi-Fi, and a quiet background script on the PC
+    (bt-watch.ps1, started at Windows sign-in) opens a PowerShell window and the Devices and Printers window.
+  - Do Windows' one click (right-click the phone > Connect using > Access point). The window then finishes everything.
+  - No Wi-Fi shared by phone and PC? Use the Desktop shortcut "PocketIris Bluetooth debugging" instead (double-click it after
+    switching On). "PocketIris Bluetooth debugging OFF" goes back to USB.
+  - To install the background watcher on a new PC: double-click tools\Install-Bluetooth-Watcher.cmd. To remove it: delete
+    "PocketIris Bluetooth watcher" from the Startup folder (Win+R, type shell:startup). The first time, Windows Firewall asks
+    whether PowerShell may receive messages: choose Allow.
+  - The doorbell is only the text "pocketiris-btdebug-on" and can do nothing except start bt-debug.ps1 on your PC.
+
+The same thing by hand
+Every time
+  Phone:  PocketIris tab > Developer > "Connect to another device by" > Bluetooth.
+          It asks Allow/Deny, then Android's own lock check (fingerprint, PIN or pattern). It then switches on Wireless debugging and
+          Bluetooth tethering by itself, finds the debugging port, and starts answering the PC on its status port (3499, reachable only
+          from the Bluetooth network). It is always off again after the app restarts. Keep the phone awake while connecting.
+  PC:     tools\bt-debug.ps1 -Smoke
+          Windows needs ONE click: a Devices and Printers window opens; right-click the phone > Connect using > Access point. The
+          script waits up to 90 seconds, then carries on by itself: it asks the phone which port to use, connects adb, remembers the
+          connection for cdp.ps1 and smoke-test.ps1, and runs the smoke test.
+  Done:   bt-debug.ps1 -Off on the PC, and switch "Bluetooth debugging" Off on the phone. Off puts Wireless debugging back to how it
+          was and switches tethering off again if the switch was what turned it on.
+
+Why the one Windows click
+  Windows has no supported command to join a phone's Bluetooth network. We tried its Bluetooth functions: they claim success but do
+  nothing (and can break the menu entry). The click is the reliable way.
+
+Good to know
+  - The Wireless debugging port changes every time Android restarts that feature; the switch finds the new one and tells the PC, so
+    you never type it.
+  - The Bluetooth link can drop when the phone sleeps; wake the phone and join again.
+  - Everything is also available by hand: the PocketIris tab > Developer has shortcuts for Bluetooth, Tethering and Developer options, and a
+    "Network addresses and debugging port" self-test.
+
+Safety
+  - The switch is off by default, off after every app restart, and turning it on needs Allow plus your lock screen.
+  - Only a PC whose adb key you approved on the phone can connect (Android asks once: "Allow debugging?").
+  - While it is on, anyone with such a PC can do almost anything on the phone. Switch it off when you are done.

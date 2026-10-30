@@ -1,0 +1,98 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Test ca-claude-version on a copy: a copy of the real Claude launcher pointed at a throwaway folder of stand-in versions
+# (small scripts), so the real versions folder and the real skip list are never touched. Prints "PASS <name>" or "FAIL <name>".
+#  Test the copy that came with this test (the newest), or else the installed one.
+tool="$(dirname "$0")/ca-claude-version"
+[ -f "$tool" ] || tool="$HOME/bin/ca-claude-version"
+#  Run it through bash, because /sdcard (where the PC puts new copies) does not allow running files directly.
+cv() { bash "$tool" "$@"; }
+t=$(mktemp -d); V="$t/versions"; mkdir -p "$V"
+export CA_CLAUDE_VERSIONS="$V" CA_CLAUDE_KEPT="$t/kept" CA_REVIEW_DIR="$t/review" CA_COMPAT="$t/compat.json" CA_CLAUDE_LOG="$t/log"
+echo '{"knownGood":{"claudeCode":"2.1.312"}}' > "$CA_COMPAT"
+
+#  The copy of the launcher: identical except for the folder it looks in; a fresh update stamp keeps it offline.
+sed "s#^VERSIONS_DIR=.*#VERSIONS_DIR=\"$V\"#" "$PREFIX/bin/claude" > "$t/launcher"; chmod +x "$t/launcher"
+touch "$V/.last-update-check"
+
+#  Makes a stand-in version: "good" works, "nophone" starts but cannot reach the phone tools, "crash" dies on start.
+fake() {
+  local mcp='echo "phone-browser: http://127.0.0.1:3401/mcp (HTTP) - ✔ Connected"' init='exit 0'
+  [ "$2" = nophone ] && mcp='echo "phone-browser: http://127.0.0.1:3401/mcp (HTTP) - ✗ Failed to connect"'
+  [ "$2" = crash ] && init='kill -SEGV $$'
+  #  The file flag "down" makes every version fail the phone check, as if the app were closed.
+  printf '%s\n' '#!/data/data/com.termux/files/usr/bin/bash' "[ -f '$t/down' ] && [ \"\$1\" = mcp ] && { echo 'phone-browser: x - ✗ Failed to connect'; exit 1; }" \
+    "case \"\$1\" in --version) echo '$1 (Claude Code)';; --init-only) $init;; mcp) $mcp;; *) echo 'ran $1';; esac" > "$V/$1"
+  chmod +x "$V/$1"
+}
+runs() { "$t/launcher" go 2>/dev/null | tail -1; }
+expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (wanted '$3', got '$2')"; fi; }
+
+fake 2.1.312 good; fake 2.1.313 nophone
+expect "launcher-runs-newest"            "$(runs)" "ran 2.1.313"
+expect "check-good-passes"               "$(cv check 2.1.312 | cut -d' ' -f1)" "PASS"
+expect "check-nophone-fails"             "$(cv check 2.1.313 | cut -d' ' -f1)" "FAIL"
+cv guard --dry-run > /dev/null; expect "guard-dry-run-changes-nothing" "$(runs)" "ran 2.1.313"
+cv guard > /dev/null; expect "guard-reverts-failing-version" "$(runs)" "ran 2.1.312"
+expect "guard-says-why-in-log"           "$(grep -c 'reverted to 2.1.312' "$t/log")" "1"
+cv unrevert 2.1.313 > /dev/null; expect "unrevert-brings-it-back" "$(runs)" "ran 2.1.313"
+cv guard > /dev/null; expect "guard-looks-once-per-version" "$(runs)" "ran 2.1.313"
+cv revert > /dev/null; expect "manual-revert" "$(runs)" "ran 2.1.312"
+cv unrevert 2.1.313 > /dev/null
+
+#  The previous version failing too means the version is not to blame: no revert.
+fake 2.1.314 good; touch "$t/down"
+cv guard > /dev/null; expect "guard-no-revert-when-previous-fails-too" "$(runs)" "ran 2.1.314"
+rm -f "$t/down"
+#  That inconclusive look is not remembered, so once the phone tools are back the version is checked again.
+cv guard > /dev/null; expect "guard-checks-again-after-inconclusive" "$(grep -c 'Guard: 2.1.314 works' "$t/log")" "1"
+
+#  Keep a spare of the known-good version, let the launcher's own cleanup remove it, then restore it.
+cv keep > /dev/null; expect "keep-spare" "$(ls "$t/kept")" "2.1.312"
+mv "$V/2.1.312" "$t/removed-by-launcher"
+cv restore-kept > /dev/null; expect "restore-kept-runs-spare" "$(runs)" "ran 2.1.312"
+expect "restore-kept-skips-newer"        "$(sort "$V/.blocklist" | tr '\n' ' ')" "2.1.313 2.1.314 "
+fake 2.1.400 good; cv keep 2.1.400 > /dev/null
+expect "older-spare-moved-not-erased"    "$(ls "$t/review") / $(ls "$t/kept")" "2.1.312 / 2.1.400"
+
+#  The launcher's own safety net still works next to ours: a version that crashes on start is skipped by the launcher itself.
+fake 2.1.500 crash
+expect "launcher-skips-crashing-version" "$(runs)" "ran 2.1.400"
+expect "launcher-blocklisted-crash"      "$(grep -c '^2.1.500$' "$V/.blocklist")" "1"
+
+#  Update channels, with a pretend npm (a tags file) and a pretend download server (a folder with builds and release manifests).
+rm -rf "$V"/2.1.*; : > "$V/.blocklist"; rm -f "$V/.ca-held" "$V/.ca-guarded"
+export CA_SETTINGS="$t/settings.conf" CA_CLAUDE_TAGS_URL="file://$t/tags.json" CA_CLAUDE_DL="file://$t/dl" CA_CLAUDE_PATCHELF=true
+tags() { printf '{"stable":"%s","latest":"%s"}' "$1" "$2" > "$t/tags.json"; }
+#  Publishes a stand-in build on the pretend server; a second argument "badsum" gives it a wrong checksum in its manifest.
+publish() {
+  fake "$1" good; mkdir -p "$t/dl/$1/linux-arm64"; mv "$V/$1" "$t/dl/$1/linux-arm64/claude"
+  local sum; sum=$(sha256sum "$t/dl/$1/linux-arm64/claude" | cut -d' ' -f1); [ "${2:-}" = badsum ] && sum=0000
+  printf '{"platforms":{"linux-arm64":{"checksum":"%s"}}}' "$sum" > "$t/dl/$1/manifest.json"
+}
+fake 2.1.310 good; fake 2.1.312 good
+expect "channel-default-latest"          "$(cv channel)" "Channel: latest"
+cv channel stable > /dev/null
+expect "channel-saved-in-settings"       "$(grep -c '^CLAUDE_CHANNEL=stable$' "$CA_SETTINGS")" "1"
+tags 2.1.308 2.1.312; cv follow > /dev/null
+expect "stable-never-moves-backwards"    "$(runs)" "ran 2.1.312"
+tags 2.1.308 2.1.313; cv follow > /dev/null
+expect "stable-holds-new-latest"         "$(cat "$V/.ca-held")" "2.1.313"
+touch -d @0 "$V/.last-update-check"; cv follow --quick > /dev/null
+expect "quick-keeps-launcher-from-checking" "$(( $(date +%s) - $(stat -c%Y "$V/.last-update-check") < 60 ))" "1"
+publish 2.1.313; tags 2.1.313 2.1.315; cv follow > /dev/null
+expect "stable-fetches-stable-build"     "$(runs)" "ran 2.1.313"
+expect "stable-releases-and-holds-next"  "$(cat "$V/.ca-held")" "2.1.315"
+expect "stable-keeps-newest-two"         "$(ls "$V" | grep -E '^2\.1\.' | sort -V | tr '\n' ' ')" "2.1.312 2.1.313 "
+publish 2.1.315 badsum; tags 2.1.315 2.1.316; cv follow > /dev/null
+expect "stable-refuses-bad-checksum"     "$(runs)" "ran 2.1.313"
+cv channel latest > /dev/null; cv follow > /dev/null
+expect "latest-releases-every-hold"      "$(grep -cE '^2\.1\.31[56]$' "$V/.blocklist")" "0"
+unset CA_SETTINGS CA_CLAUDE_TAGS_URL CA_CLAUDE_DL CA_CLAUDE_PATCHELF
+
+#  Never skip the last usable version.
+rm -rf "$V"/2.1.*; : > "$V/.blocklist"; fake 2.1.600 good
+cv revert > /dev/null; expect "revert-refuses-last-version" "$(runs)" "ran 2.1.600"
+
+#  The real folder was never touched.
+expect "real-versions-untouched"         "$(ls "$HOME/.local/share/claude/versions" | grep -cE '^2\.1\.(312|313|314|400|500|600)$')" "1"
+rm -rf "$t"

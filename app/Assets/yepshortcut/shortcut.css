@@ -1,0 +1,29 @@
+/*
+ * Styles for the "Move to trash" shortcut that PocketIris adds to the chat page. They use only the chat page's own variables
+ * (no colour or size literal), so the shortcut looks like part of the chat and follows its theme.
+ */
+.pc-toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--space-4);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: max-content;
+  max-width: 90%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--font-size-lg);
+}
+.pc-toast button {
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  background: var(--primary-color);
+  color: var(--accent-contrast);
+  font: inherit;
+}

@@ -1,0 +1,19 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Start the terminal server for the app (ttyd on 127.0.0.1:3402, password = the token the app passes in CA_TERM_TOKEN).
+#  Do nothing when the terminal program is not installed.
+command -v ttyd >/dev/null || exit 0
+f="$HOME/.ca-term-token"
+#  Store a new password and stop the old terminal server whenever the app hands over a different one.
+if [ -n "${CA_TERM_TOKEN:-}" ]; then
+  [ "$(cat "$f" 2>/dev/null)" = "$CA_TERM_TOKEN" ] || { umask 077; printf '%s' "$CA_TERM_TOKEN" > "$f"; pkill -x ttyd 2>/dev/null; sleep 1; }
+fi
+#  The font size comes from the app (it follows the app's text size); a different size restarts the terminal server so it applies.
+ff="$HOME/.ca-term-font"
+font="${CA_TERM_FONT:-$(cat "$ff" 2>/dev/null || echo 14)}"
+[ "$(cat "$ff" 2>/dev/null || echo 14)" = "$font" ] || { printf '%s' "$font" > "$ff"; pkill -x ttyd 2>/dev/null; sleep 1; }
+#  Do nothing without a stored password, and do nothing if the terminal server is already running.
+[ -s "$f" ] || exit 0
+pgrep -x ttyd >/dev/null && exit 0
+nohup ttyd -i lo -p 3402 -W -a -c "ca:$(cat "$f")" \
+  -t fontSize=$font -t disableResizeOverlay=true -t 'theme={"background":"#1F1E1D","foreground":"#E8E6DC","cursor":"#C96442"}' \
+  "$HOME/bin/ca-termshell" >> "$HOME/ttyd.log" 2>&1 &

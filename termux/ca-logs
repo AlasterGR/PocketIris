@@ -1,0 +1,3 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Show the last lines of the server log (40 by default, or the number you give).
+tail -n ${1:-40} "$HOME/ya-android/server.log"

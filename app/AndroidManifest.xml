@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+  <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+  <!-- Only usable after the user grants it once over adb; lets the Bluetooth debugging switch change Android's Wireless debugging setting -->
+  <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+  <!-- Lets the script launcher list the scripts Claude pushes to Documents/ca/scripts (granted once, in Settings) -->
+  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- Lets this app ask Termux to run a command (the user must also set allow-external-apps=true in Termux) -->
+  <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+  <!-- Hands verified Termux app updates to Android's installer, which always asks the user to confirm -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+  <queries>
+    <package android:name="com.termux" />
+    <!-- The Termux add-ons, so the Updates card can show their versions -->
+    <package android:name="com.termux.api" />
+    <package android:name="com.termux.boot" />
+    <package android:name="com.termux.widget" />
+    <!-- Lets phone_open_app find and open any app that has a launcher icon -->
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+  </queries>
+  <application android:allowBackup="false"
+               android:icon="@mipmap/appicon"
+               android:label="@string/app_name"
+               android:roundIcon="@mipmap/appicon_round"
+               android:supportsRtl="true"
+               android:usesCleartextTraffic="true">
+    <!-- The control entry point for the PC (started with adb shell am start and the .ControlActivity name). Android lets only holders of the
+         DUMP permission start it: the adb shell has it, ordinary apps can never get it. Commands that run code or change safety
+         settings are honoured only when they arrive through here. -->
+    <activity-alias android:name="io.github.alastergr.pocketiris.ControlActivity"
+                    android:targetActivity="io.github.alastergr.pocketiris.MainActivity"
+                    android:exported="true"
+                    android:permission="android.permission.DUMP" />
+    <service android:name="io.github.alastergr.pocketiris.KeepAliveService" android:exported="false"
+             android:foregroundServiceType="specialUse">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the local browser tool server for Claude running while the app is in the background" />
+    </service>
+  </application>
+</manifest>

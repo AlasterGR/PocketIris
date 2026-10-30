@@ -1,0 +1,29 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Refresh the ca-* commands and install the newest build from /sdcard/Documents, then restart the server.
+# Safe to run from /sdcard/Documents/ca/ca-update (the app does that) or as ca-update.
+exec > >(tee "$HOME/ca-update.log") 2>&1
+set -e
+echo "ca-update $(date '+%F %T')"
+#  Refresh the other commands one by one, copying first and renaming after, so a running script is never overwritten in place.
+if [ -d /sdcard/Documents/ca ]; then
+  #  Go through every ca-* command file and install it.
+  for f in /sdcard/Documents/ca/ca-*; do
+    b=$(basename "$f"); cp "$f" "$HOME/bin/.$b.new" && chmod +x "$HOME/bin/.$b.new" && mv -f "$HOME/bin/.$b.new" "$HOME/bin/$b"
+  done
+fi
+TGZ=$(ls -1 /sdcard/Documents/yepanywhere-*.tgz 2>/dev/null | sort -V | tail -1)
+#  Stop with a message if no build file was pushed to the phone.
+[ -n "$TGZ" ] || { echo "No yepanywhere-*.tgz in /sdcard/Documents"; exit 1; }
+echo "Using $TGZ"
+#  Stop the old server first, whether or not one was running.
+pkill -f '[y]epanywhere/dist/cli.js' && echo "stopped old server" || echo "no server was running"
+sleep 2
+cd "$HOME/ya-android"
+#  Remove the password-library stand-in that older versions of this script left behind, so the official package is installed untouched.
+if grep -q bcryptjs node_modules/bcrypt/index.js 2>/dev/null; then rm -rf node_modules/bcrypt; fi
+npm install "$TGZ" --ignore-scripts --no-audit --no-fund 2>&1 | tail -2
+#  Install the pure-JavaScript password library if it is missing.
+[ -d node_modules/bcryptjs ] || npm install bcryptjs --ignore-scripts --no-audit --no-fund >/dev/null 2>&1
+echo "Installed: $(node -e 'console.log(require(process.env.HOME+"/ya-android/node_modules/yepanywhere/package.json").version)')"
+"$HOME/bin/ca-start"
+echo "done"

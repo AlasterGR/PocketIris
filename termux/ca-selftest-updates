@@ -1,0 +1,83 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Test ca-updates on a copy: stand-in release lists, stand-in Claude versions (small scripts), a stand-in notifier and launcher, and a
+# throwaway state file, so nothing real is installed or changed. Prints "PASS <name>" or "FAIL <name>".
+here=$(dirname "$0")
+t=$(mktemp -d); V="$t/versions"; mkdir -p "$V" "$t/bin" "$t/dl"
+#  The commands under test: the copies that came with this test (the newest), run through bash because /sdcard does not allow running files.
+for c in ca-updates ca-claude-version; do src="$here/$c"; [ -f "$src" ] || src="$HOME/bin/$c"; printf '#!/data/data/com.termux/files/usr/bin/bash\nexec bash "%s" "$@"\n' "$src" > "$t/bin/$c"; done
+printf '#!/data/data/com.termux/files/usr/bin/bash\necho "$*" >> "%s/notices"\n' "$t" > "$t/bin/termux-notification"
+#  A stand-in for ca-versions: the real one would rewrite the phone's real version record.
+printf '#!/data/data/com.termux/files/usr/bin/bash\nexit 0\n' > "$t/bin/ca-versions"
+chmod +x "$t/bin/"*
+export PATH="$t/bin:$PATH" CA_UPDATES_STATE="$t/updates.json" CA_UPDATES_LOG="$t/log" CA_CLAUDE_LOG="$t/log" CA_CLAUDE_VERSIONS="$V" \
+  CA_SETTINGS="$t/settings.conf" CA_CLAUDE_TAGS_URL="file://$t/tags.json" CA_YEP_LATEST_URL="file://$t/yep.json" CA_CLAUDE_DL="file://$t/dl" \
+  CA_CLAUDE_PATCHELF=true CA_COMPAT="$t/compat.json" CA_UPDATES_NO_NET=1 CA_CLAUDE_KEPT="$t/kept" CA_REVIEW_DIR="$t/review"
+echo '{"knownGood":{"claudeCode":"2.1.312","termuxPackages":{}}}' > "$CA_COMPAT"
+#  Makes a stand-in Claude version: "good" works, "nophone" starts but cannot reach the phone tools.
+fake() {
+  local mcp='echo "phone-browser: http://127.0.0.1:3401/mcp (HTTP) - ✔ Connected"'
+  [ "$2" = nophone ] && mcp='echo "phone-browser: x - ✗ Failed to connect"'
+  printf '%s\n' '#!/data/data/com.termux/files/usr/bin/bash' "case \"\$1\" in --version) echo '$1 (Claude Code)';; --init-only) exit 0;; mcp) $mcp;; *) echo 'ran $1';; esac" > "$V/$1"
+  chmod +x "$V/$1"
+}
+tags() { printf '{"stable":"%s","latest":"%s"}' "$1" "$2" > "$t/tags.json"; }
+sg() { node -e 'let o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const k of process.argv[2].split("."))o=o==null?o:o[k];process.stdout.write(o==null?"":String(o))' "$t/updates.json" "$1" 2>/dev/null; }
+notices() { [ -f "$t/notices" ] && grep -c . "$t/notices" || echo 0; }
+expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (wanted '$3', got '$2')"; fi; }
+
+#  Publishes a stand-in build on the pretend download server, with its release manifest.
+publish() {
+  fake "$1" "$2"; mkdir -p "$t/dl/$1/linux-arm64"; mv "$V/$1" "$t/dl/$1/linux-arm64/claude"
+  printf '{"platforms":{"linux-arm64":{"checksum":"%s"}}}' "$(sha256sum "$t/dl/$1/linux-arm64/claude" | cut -d' ' -f1)" > "$t/dl/$1/manifest.json"
+}
+fake 2.1.310 good; fake 2.1.312 good; tags 2.1.313 2.1.315
+ca-updates check claude > /dev/null
+expect "claude-follows-stable-only"      "$(sg claude.installed) $(sg claude.available)" "2.1.312 2.1.313"
+expect "claude-notice-once"              "$(notices)" "1"
+ca-updates check claude > /dev/null
+expect "claude-no-second-notice"         "$(notices)" "1"
+expect "notice-opens-pocketiris"       "$(grep -c 'cmd pocketiris' "$t/notices")" "1"
+tags 2.1.308 2.1.315; ca-updates check claude > /dev/null
+expect "older-stable-is-not-offered"     "$(notices) $(sg claude.available)" "1 2.1.308"
+rm -f "$t/tags.json"; ca-updates check claude > /dev/null
+expect "npm-silent-keeps-last-answer"    "$(sg claude.available)" "2.1.308"
+tags 2.1.313 2.1.315; ca-updates check claude > /dev/null
+
+#  Yep: a newer release is told once; the installed version is read from the real install (read-only).
+printf '{"version":"99.0.0"}' > "$t/yep.json"; ca-updates check yep > /dev/null
+expect "yep-check-finds-newer"           "$(sg yep.available)" "99.0.0"
+expect "yep-notice"                      "$(grep -c 'Yep' "$t/notices")" "1"
+
+#  Monthly: a check from today is not repeated; one older than 30 days is.
+before=$(sg yep.checkedAt); ca-updates check due > /dev/null
+expect "monthly-not-due-yet"             "$(sg yep.checkedAt)" "$before"
+node -e 'const f=process.argv[1];const s=JSON.parse(require("fs").readFileSync(f));s.yep.checkedAt="1";require("fs").writeFileSync(f,JSON.stringify(s))' "$t/updates.json"
+ca-updates check due > /dev/null
+expect "monthly-due-checks-again"        "$([ "$(sg yep.checkedAt)" != 1 ] && echo yes)" "yes"
+expect "packages-counted"                "$([ -n "$(sg pkgs.waiting)" ] && echo yes)" "yes"
+
+#  The launcher's own daily check is held off for good.
+ca-updates hold-launcher
+expect "launcher-held-off"               "$(date -r "$V/.last-update-check" +%Y)" "2100"
+
+#  Update Claude Code to the newest stable release, fetched from the pretend download server with its checksum.
+publish 2.1.313 good
+ca-updates run claude > /dev/null
+expect "update-claude-runs-new"          "$(ca-claude-version current)" "2.1.313"
+expect "update-claude-reports-ok"        "$(sg last.ok)" "true"
+expect "update-marks-known-good"         "$(node -p "require('$CA_COMPAT').recordedBy" 2>/dev/null)" "phone (claude update)"
+expect "launcher-held-after-update"      "$(date -r "$V/.last-update-check" +%Y)" "2100"
+expect "lock-released"                   "$([ -d "$HOME/.ca-updates.lock" ] && echo held || echo free)" "free"
+
+#  An update that breaks PocketIris is set aside by the guard, and the result says so.
+publish 2.1.314 nophone; tags 2.1.314 2.1.315; ca-updates check claude > /dev/null
+ca-updates run claude > /dev/null
+expect "broken-update-set-aside"         "$(ca-claude-version current) $(sg last.ok)" "2.1.313 false"
+
+#  Only one update at a time.
+mkdir "$HOME/.ca-updates.lock"
+expect "second-update-refused"           "$(ca-updates run claude | head -1)" "Another update is running."
+rmdir "$HOME/.ca-updates.lock"
+
+expect "real-versions-untouched"         "$(ls "$HOME/.local/share/claude/versions" | grep -cE '^2\.1\.31[34]$')" "0"
+rm -rf "$t"

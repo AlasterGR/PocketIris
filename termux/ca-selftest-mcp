@@ -1,0 +1,36 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Check the app's tool server from inside Termux: it must accept Claude's key and refuse everyone else.
+# Prints one line per check, "PASS <name>" or "FAIL <name>". Never prints the key itself.
+url=http://127.0.0.1:3401/mcp
+token=$(cat "$HOME/.ca-mcp-token" 2>/dev/null)
+list='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+call='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"phone_battery","arguments":{}}}'
+tmp=$(mktemp)
+
+#  Sends one request and returns only the HTTP status code.
+code() { curl -s -o /dev/null -w '%{http_code}' -m 8 "$@"; }
+
+#  Prints PASS or FAIL for a check, depending on whether the two values match.
+expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (wanted $3, got $2)"; fi; }
+
+#  Without a saved key nothing below can work, so say so once and stop.
+[ -n "$token" ] || { echo "FAIL key-saved (no ~/.ca-mcp-token: the app has not registered the tool server yet)"; rm -f "$tmp"; exit 0; }
+
+#  Claude's own way in: the key and JSON. It must list the tools and answer a phone tool.
+curl -s -m 8 -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$list" > "$tmp"
+if grep -q browser_download "$tmp" && grep -q phone_battery "$tmp"; then echo "PASS tool-list"; else echo "FAIL tool-list"; fi
+curl -s -m 8 -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$call" > "$tmp"
+if grep -q 'Battery' "$tmp"; then echo "PASS phone_battery"; else echo "FAIL phone_battery"; fi
+
+#  Everyone else must be refused.
+expect "no-key-refused"      "$(code -X POST "$url" -H 'Content-Type: application/json' -d "$list")" 401
+expect "wrong-key-refused"   "$(code -X POST "$url" -H 'Authorization: Bearer not-the-key' -H 'Content-Type: application/json' -d "$list")" 401
+expect "web-page-refused"    "$(code -X POST "$url" -H "Authorization: Bearer $token" -H 'Origin: http://evil.example' -H 'Content-Type: application/json' -d "$list")" 403
+expect "wrong-host-refused"  "$(code -X POST "$url" -H "Authorization: Bearer $token" -H 'Host: evil.example' -H 'Content-Type: application/json' -d "$list")" 403
+expect "not-json-refused"    "$(code -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: text/plain' -d "$list")" 415
+
+#  A body over the 2 MB limit must be refused (the server may also just hang up, which is fine).
+head -c 2100000 /dev/zero | tr '\0' 'a' > "$tmp"
+big=$(code -X POST "$url" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data-binary "@$tmp")
+if [ "$big" = "413" ] || [ "$big" = "000" ]; then echo "PASS too-big-refused ($big)"; else echo "FAIL too-big-refused (got $big)"; fi
+rm -f "$tmp"

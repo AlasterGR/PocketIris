@@ -1,0 +1,26 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Start PocketIris's server on http://localhost:3400 (accept edits by default); notifications come from the sidecar.
+termux-wake-lock
+"$HOME/bin/ca-term" 2>/dev/null
+#  Before anything starts Claude: keep the launcher from updating by itself (updates come only from the Updates button; instant, no network).
+"$HOME/bin/ca-updates" hold-launcher > /dev/null 2>&1
+"$HOME/bin/ca-rc" 2>/dev/null
+#  Give Claude the key to the app's tool server (it changes nothing when Claude already has it).
+"$HOME/bin/ca-mcp-register" >> "$HOME/ca-mcp.log" 2>&1
+#  Keep the sidecar (notifications and trash) running; it needs no restart when Yep restarts.
+"$HOME/bin/ca-sidecar"
+#  In the background: let the guard check a changed Claude Code version (and set it aside if it breaks PocketIris), record the versions
+#  for the app, and see whether a newer Claude Code is out (a notice only; installing waits for the Updates button).
+( { "$HOME/bin/ca-claude-version" guard > /dev/null 2>&1; "$HOME/bin/ca-versions" > /dev/null 2>&1; "$HOME/bin/ca-updates" check claude > /dev/null 2>&1; } & )
+#  Do nothing more if the server already answers.
+if curl -s -o /dev/null --max-time 2 http://localhost:3400/; then echo "already running: http://localhost:3400"; exit 0; fi
+#  Keep the logs within the size and age limits of settings.conf.
+"$HOME/bin/ca-trim-logs"
+#  Set the accept-edits default for new sessions before the server reads its settings.
+"$HOME/bin/ca-defaults" 2>/dev/null
+#  Load the Android shims (hard-link fallback, bcrypt twin) before Yep starts, so Yep itself stays exactly as released.
+export NODE_OPTIONS="--require $HOME/bin/ca-preload.cjs ${NODE_OPTIONS:-}"
+export PERMISSION_MODE=acceptEdits
+cd "$HOME/ya-android" && nohup node node_modules/yepanywhere/dist/cli.js --port 3400 >> server.log 2>&1 &
+sleep 6
+curl -s -o /dev/null -w "started: http://localhost:3400 (%{http_code})\n" http://localhost:3400/

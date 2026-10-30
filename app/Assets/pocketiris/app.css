@@ -1,0 +1,204 @@
+/*
+ * Styles of the PocketIris page. Tier-2 tokens only (--pc-sys-*): no colour or size literal may appear in this file
+ * (tools\check-tokens.ps1 checks it). The tokens themselves come from the app (Tokens.cs) and are put in front of this file.
+ */
+
+.pc-root {
+  --pc-sys-text-scale: var(--pc-sys-scale-normal);
+  margin: 0;
+  background: var(--pc-sys-background);
+  color: var(--pc-sys-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: var(--pc-sys-text-md);
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Text size choices: one switch changes every text size at once (the sizes are multiplied by the scale). */
+.pc-root.text-scale-normal { --pc-sys-text-scale: var(--pc-sys-scale-normal); }
+.pc-root.text-scale-large { --pc-sys-text-scale: var(--pc-sys-scale-large); }
+.pc-root.text-scale-very-large { --pc-sys-text-scale: var(--pc-sys-scale-very-large); }
+.pc-root.text-scale-huge { --pc-sys-text-scale: var(--pc-sys-scale-huge); }
+
+/* The page: one column on a phone, two on a tablet or desktop, and a wider limit as the view grows. */
+.page {
+  max-width: var(--pc-sys-content-phone);
+  margin: 0 auto;
+  padding: var(--pc-sys-space-lg);
+}
+.ui-effective-tablet .page { max-width: var(--pc-sys-content-tablet); }
+.ui-effective-desktop .page { max-width: var(--pc-sys-content-desktop); }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--pc-sys-space-lg);
+  align-items: start;
+}
+.ui-effective-tablet .grid,
+.ui-effective-desktop .grid { grid-template-columns: 1fr 1fr; }
+.ui-effective-tablet .card.wide,
+.ui-effective-desktop .card.wide { grid-column: 1 / -1; }
+
+
+h2 { margin: 0 0 var(--pc-sys-space-lg); font-size: var(--pc-sys-text-xl); }
+strong { font-size: var(--pc-sys-text-lg); }
+p { margin: var(--pc-sys-space-xs) 0 0; font-size: var(--pc-sys-text-md); }
+.muted { color: var(--pc-sys-text-dim); font-size: var(--pc-sys-text-sm); }
+
+.card {
+  background: var(--pc-sys-surface);
+  border-radius: var(--pc-sys-radius-lg);
+  padding: var(--pc-sys-space-xl);
+}
+
+/* Every card is a disclosure: the whole title row is the control, and an arrow at the card's outer edge shows it. The arrow points
+   to that edge while the card is closed and turns to point at the content once it is open. Cards in the left column of a two-column
+   layout carry the arrow on the left edge, all others on the right edge. */
+details.card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-sys-space-lg);
+  min-height: var(--pc-sys-size-control);
+  cursor: pointer;
+  list-style: none;
+}
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary h2 { margin: 0; }
+details.card > summary::after {
+  content: "›";
+  color: var(--pc-sys-text-dim);
+  font-size: var(--pc-sys-text-2xl);
+  line-height: 1;
+}
+details.card[open] > summary { margin-bottom: var(--pc-sys-space-lg); }
+
+/* The title row is the whole header box: the card has no padding of its own, the header and the content carry it. While the title row is
+   pressed, that box (the header when open, the whole card when closed) turns the brand colour, and the system's blue flash is switched off. */
+details.card { padding: 0; -webkit-tap-highlight-color: transparent; }
+details.card > summary { padding: var(--pc-sys-space-xl); border-radius: var(--pc-sys-radius-lg); -webkit-user-select: none; user-select: none; }
+details.card > :not(summary) { margin-left: var(--pc-sys-space-xl); margin-right: var(--pc-sys-space-xl); }
+details.card > :last-child:not(summary) { margin-bottom: var(--pc-sys-space-xl); }
+details.card[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: var(--pc-sys-space-lg); }
+details.card > summary:active { background: var(--pc-sys-accent); }
+details.card > summary:active h2,
+details.card > summary:active::after { color: var(--pc-sys-on-accent); }
+details.card[open] > summary::after { transform: rotate(90deg); }
+.ui-effective-tablet .grid > details.card:nth-child(odd):not(.wide) > summary,
+.ui-effective-desktop .grid > details.card:nth-child(odd):not(.wide) > summary { flex-direction: row-reverse; justify-content: flex-end; }
+.ui-effective-tablet .grid > details.card:nth-child(odd):not(.wide) > summary::after,
+.ui-effective-desktop .grid > details.card:nth-child(odd):not(.wide) > summary::after { content: "‹"; }
+.ui-effective-tablet .grid > details.card:nth-child(odd):not(.wide)[open] > summary::after,
+.ui-effective-desktop .grid > details.card:nth-child(odd):not(.wide)[open] > summary::after { transform: rotate(-90deg); }
+
+/* A group inside a field, set in a little from the edge. */
+.subfield { padding: var(--pc-sys-space-lg) 0 0; }
+.subfield > strong { display: block; margin-bottom: var(--pc-sys-space-md); }
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pc-sys-space-xl);
+  padding: var(--pc-sys-space-lg) 0;
+  border-top: var(--pc-sys-border-width) solid var(--pc-sys-control-quiet);
+}
+.row:first-of-type { border-top: none; padding-top: 0; }
+.info { flex: 1; min-width: 0; }
+
+.field { padding: var(--pc-sys-space-lg) 0; border-top: var(--pc-sys-border-width) solid var(--pc-sys-control-quiet); }
+.field:first-of-type { border-top: none; padding-top: 0; }
+.field > strong { display: block; margin-bottom: var(--pc-sys-space-md); }
+
+/* Buttons and controls: always at least a comfortable finger size. */
+.btn, .switch, .segmented button, .select {
+  min-height: var(--pc-sys-size-control);
+  font-size: var(--pc-sys-text-md);
+  font-family: inherit;
+  color: var(--pc-sys-text);
+  border: none;
+  border-radius: var(--pc-sys-radius-md);
+  background: var(--pc-sys-control-quiet);
+  padding: 0 var(--pc-sys-space-xl);
+}
+.btn.primary { background: var(--pc-sys-accent); color: var(--pc-sys-on-accent); }
+.btn:disabled, .select:disabled, .switch:disabled { opacity: 0.45; }
+.select { width: 100%; }
+
+/* A switch: a pill with a knob that moves when it is on. */
+.switch {
+  position: relative;
+  min-width: var(--pc-sys-size-control-lg);
+  width: var(--pc-sys-size-control-lg);
+  padding: 0;
+}
+.switch .knob {
+  position: absolute;
+  top: var(--pc-sys-space-xs);
+  left: var(--pc-sys-space-xs);
+  width: var(--pc-sys-space-3xl);
+  height: var(--pc-sys-space-3xl);
+  border-radius: var(--pc-sys-radius-xl);
+  background: var(--pc-sys-text-dim);
+}
+.switch[aria-checked="true"] { background: var(--pc-sys-accent); }
+.switch[aria-checked="true"] .knob { left: auto; right: var(--pc-sys-space-xs); background: var(--pc-sys-on-accent); }
+
+/* A segmented control: one row of choices, the chosen one in the brand colour. */
+.segmented { display: flex; flex-wrap: wrap; gap: var(--pc-sys-space-sm); }
+.segmented button { flex: 1 1 auto; padding: 0 var(--pc-sys-space-lg); }
+.segmented button[aria-pressed="true"] { background: var(--pc-sys-accent); color: var(--pc-sys-on-accent); }
+
+/* A row title that opens a page: it reads as a heading but carries the link colour and an underline, so it shows it can be tapped. */
+.title-link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: var(--pc-sys-text-lg);
+  font-weight: bold;
+  color: var(--pc-sys-accent);
+  text-decoration: underline;
+  text-underline-offset: var(--pc-sys-space-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.title-link:active { color: var(--pc-sys-text); }
+
+/* The one button of an update row: quiet while it only checks, the brand colour when there is an update to install. */
+.btn.update { background: var(--pc-sys-accent); color: var(--pc-sys-on-accent); }
+
+.reason { color: var(--pc-sys-text-dim); font-size: var(--pc-sys-text-sm); font-style: italic; }
+.reason[hidden] { display: none; }
+
+.list { margin-top: var(--pc-sys-space-lg); }
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--pc-sys-space-lg);
+  padding: var(--pc-sys-space-lg) 0;
+  border-top: var(--pc-sys-border-width) solid var(--pc-sys-control-quiet);
+}
+.item input[type="checkbox"] { width: var(--pc-sys-space-3xl); height: var(--pc-sys-space-3xl); accent-color: var(--pc-sys-accent); }
+.item .what { flex: 1; min-width: 0; }
+.item .what .title { font-size: var(--pc-sys-text-md); overflow-wrap: anywhere; }
+.item .what .meta { color: var(--pc-sys-text-dim); font-size: var(--pc-sys-text-xs); }
+.item .test-result:not(:empty) { margin-top: var(--pc-sys-space-xs); }
+.item .test-result { color: var(--pc-sys-text-dim); font-size: var(--pc-sys-text-xs); overflow-wrap: anywhere; }
+
+.actions { display: flex; align-items: center; gap: var(--pc-sys-space-lg); margin-top: var(--pc-sys-space-lg); flex-wrap: wrap; }
+
+/* The Undo message after a move: it stays long enough to be read and used. */
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pc-sys-space-lg);
+  margin-top: var(--pc-sys-space-lg);
+  padding: var(--pc-sys-space-lg);
+  border-radius: var(--pc-sys-radius-md);
+  background: var(--pc-sys-sunken);
+}
+.notice[hidden] { display: none; }

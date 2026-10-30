@@ -1,0 +1,33 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Write the versions of everything PocketIris depends on to ~/pocketiris-versions.json, and a copy the app can read to
+# /sdcard/Documents/ca/versions.json. Read-only apart from those two files; the app compares them with compat.json.
+export PATH="$HOME/bin:$PATH"
+
+#  Prints the first a.b.c version number found in the text given, or nothing.
+num() { grep -oE '[0-9]+\.[0-9]+\.[0-9]+[0-9a-z.-]*' | head -1; }
+
+claude_v=$(claude --version 2>/dev/null | num)
+node_v=$(node -v 2>/dev/null | num)
+npm_v=$(npm -v 2>/dev/null | num)
+ttyd_v=$(ttyd --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+ssh_v=$(ssh -V 2>&1 | grep -oE 'OpenSSH_[^ ,]+' | cut -d_ -f2)
+yep_v=$(node -p "require('$HOME/ya-android/node_modules/yepanywhere/package.json').version" 2>/dev/null)
+termux_v=${TERMUX_VERSION:-}
+#  Termux sets TERMUX_VERSION in its sessions; when it is missing, ask the package manager (Android's own record of the app).
+if [ -z "$termux_v" ]; then termux_v=$(dumpsys package com.termux 2>/dev/null | grep -m1 versionName | cut -d= -f2); fi
+
+#  The last time the guard set a Claude Code version aside (ca-claude-version), so the app can say which, back to which, and when.
+guard_from=""; guard_to=""; guard_at=""
+guard_line=$(grep 'Guard: .*reverted to' "$HOME/ca-claude-version.log" 2>/dev/null | tail -1)
+if [[ "$guard_line" =~ ^\[([0-9-]+\ [0-9:]+)\]\ Guard:\ ([0-9.]+)\ failed.*reverted\ to\ ([0-9.]+)\. ]]; then
+  guard_at="${BASH_REMATCH[1]}"; guard_from="${BASH_REMATCH[2]}"; guard_to="${BASH_REMATCH[3]}"
+fi
+
+json=$(printf '{"writtenAt":"%s","claudeCode":"%s","node":"%s","npm":"%s","ttyd":"%s","openssh":"%s","termux":"%s","yep":"%s","guardAt":"%s","guardFrom":"%s","guardTo":"%s"}' \
+  "$(date -u +%FT%TZ)" "$claude_v" "$node_v" "$npm_v" "$ttyd_v" "$ssh_v" "$termux_v" "$yep_v" "$guard_at" "$guard_from" "$guard_to")
+
+#  Write each file under a temporary name first and rename it, so a reader never sees half a file.
+printf '%s\n' "$json" > "$HOME/.pocketiris-versions.json.new" && mv -f "$HOME/.pocketiris-versions.json.new" "$HOME/pocketiris-versions.json"
+mkdir -p /sdcard/Documents/ca
+printf '%s\n' "$json" > /sdcard/Documents/ca/.versions.json.new && mv -f /sdcard/Documents/ca/.versions.json.new /sdcard/Documents/ca/versions.json
+echo "$json"

@@ -1,0 +1,22 @@
+# Build output
+app/bin/
+app/obj/
+.vs/
+
+# Downloaded and built packages
+deploy/
+*.tgz
+*.apk
+
+# Signing keys never belong here
+*.keystore
+*.jks
+*.pfx
+*.p12
+*.pem
+
+# This machine's own settings for the PC tools
+tools/local.ps1
+tools/.adb-serial
+tools/.phone-lan
+termux/ca-pc.pub

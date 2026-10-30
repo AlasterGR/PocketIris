@@ -1,0 +1,26 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Check the Android shims that keep the official Yep Anywhere unpatched: the running server loaded them, the bcrypt twin works, and hard links work.
+# Prints one line per check, "PASS <name>" or "FAIL <name>".
+cd "$HOME/ya-android" || { echo "FAIL ya-android-folder"; exit 0; }
+pre="$HOME/bin/ca-preload.cjs"
+
+#  The running server must have been started with the preload.
+pid=$(pgrep -f 'yepanywhere/dist/cli.js' | head -1)
+if [ -n "$pid" ] && tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -q 'ca-preload.cjs'; then echo "PASS server-loaded-preload"; else echo "FAIL server-loaded-preload"; fi
+
+#  An import of "bcrypt" must work through the shim, which points it at the pure-JavaScript twin.
+out=$(node --require "$pre" --input-type=module -e "import bcrypt from 'bcrypt'; const h = await bcrypt.hash('x', 4); console.log((await bcrypt.compare('x', h)) ? 'ok' : 'bad')" 2>&1 | tail -1)
+if [ "$out" = "ok" ]; then echo "PASS bcrypt-twin"; else echo "FAIL bcrypt-twin ($out)"; fi
+
+#  A hard link must succeed, directly or through the copy fallback, and must still refuse to overwrite an existing file.
+d="$HOME/.ca-linktest"; rm -rf "$d"; mkdir -p "$d"; echo a > "$d/one"
+res=$(node --require "$pre" -e "
+const fsp = require('node:fs/promises');
+(async () => {
+  await fsp.link('$d/one', '$d/two');
+  let again = 'no-error';
+  try { await fsp.link('$d/one', '$d/two'); } catch (e) { again = e.code; }
+  console.log(again);
+})().catch((e) => console.log('failed ' + e.code));" 2>&1 | tail -1)
+rm -rf "$d"
+if [ "$res" = "EEXIST" ]; then echo "PASS hard-link-fallback"; else echo "FAIL hard-link-fallback ($res)"; fi

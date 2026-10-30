@@ -1,0 +1,4 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Stop the server.
+#  Stop the server and say so, or say that it was not running.
+pkill -f '[y]epanywhere/dist/cli.js' && echo stopped || echo "not running"

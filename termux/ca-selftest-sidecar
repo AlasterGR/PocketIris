@@ -1,0 +1,129 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Test the sidecar with a pretend Yep, a throwaway home folder and a stand-in notifier (nothing real is touched).
+# Prints one line per check, "PASS <name>" or "FAIL <name>".
+#  The real, running sidecar must answer with its key and refuse without it (skipped on a phone where it was never started).
+if [ -s "$HOME/.ca-sidecar-token" ]; then
+  live=$(cat "$HOME/.ca-sidecar-token")
+  lc() { curl -s -o /dev/null -w '%{http_code}' -m 6 "$@"; }
+  if [ "$(lc -H "Authorization: Bearer $live" http://127.0.0.1:3405/status)" = "200" ]; then echo "PASS live-sidecar-answers"; else echo "FAIL live-sidecar-answers"; fi
+  if [ "$(lc http://127.0.0.1:3405/status)" = "401" ]; then echo "PASS live-sidecar-refuses-no-key"; else echo "FAIL live-sidecar-refuses-no-key"; fi
+else
+  echo "FAIL live-sidecar-answers (no ~/.ca-sidecar-token: the sidecar was never started by the app)"
+fi
+sidecar="$HOME/bin/ca-sidecar.cjs"
+[ -f "$sidecar" ] || sidecar="$(dirname "$0")/ca-sidecar.cjs"
+t=$(mktemp -d); mkdir -p "$t/bin" "$t/home/.claude/projects/-t-proj/aaa"
+key=testkey-$RANDOM; ypid=""; spid=""
+
+#  The stand-in notifier writes what it was asked to show into a file.
+cat > "$t/bin/termux-notification" <<'N'
+#!/data/data/com.termux/files/usr/bin/bash
+echo "$*" >> "$NOTIFY_LOG"
+N
+cat > "$t/bin/termux-notification-remove" <<'N'
+#!/data/data/com.termux/files/usr/bin/bash
+echo "REMOVE $*" >> "$NOTIFY_LOG"
+N
+chmod +x "$t/bin/"*
+export NOTIFY_LOG="$t/notify.log"; : > "$NOTIFY_LOG"
+
+#  The pretend Yep: it reports the sessions listed in state.json and "stops" a session when asked to.
+cat > "$t/yep.cjs" <<'Y'
+const http = require('http'), fs = require('fs');
+const read = () => JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
+http.createServer((q, r) => {
+  //  The real Yep refuses every change that lacks this header, so the pretend one does too.
+  if (q.method !== 'GET' && q.headers['x-yep-anywhere'] !== 'true') { r.writeHead(403); r.end('{"error":"Missing required header"}'); return; }
+  if (q.method === 'PUT' && q.url.endsWith('/metadata')) {
+    let b = ''; q.on('data', (d) => b += d).on('end', () => { fs.appendFileSync(process.argv[2] + '/metadata.log', q.url + ' ' + b + String.fromCharCode(10)); r.writeHead(200, { 'content-type': 'application/json' }); r.end('{"updated":true}'); });
+    return;
+  }
+  const send = (o) => { r.writeHead(200, { 'content-type': 'application/json' }); r.end(JSON.stringify(o)); };
+  if (q.url === '/api/processes') return send({ processes: read() });
+  if (q.url === '/api/projects') return send({ projects: [{ id: 'PID', name: 'proj', provider: 'claude', sessionDir: '/x/projects/-t-proj' }] });
+  if (q.url === '/api/projects/PID/sessions') return send({ sessions: [{ id: 'aaa', title: 'Listed title', updatedAt: '2026-01-01T00:00:00Z', messageCount: 3 }] });
+  //  The session counts as archived by the user while the file archived.flag exists.
+  if (q.url === '/api/projects/PID/sessions/aaa/metadata') return send({ session: fs.existsSync(process.argv[2] + '/archived.flag') ? { id: 'aaa', isArchived: true } : { id: 'aaa' } });
+  if (q.url === '/api/inbox') return send({ needsAttention: [{ id: 's1', pendingInputType: 'tool-approval' }] });
+  if (q.method === 'POST' && q.url.startsWith('/api/processes/') && q.url.endsWith('/abort')) { fs.writeFileSync(process.argv[2] + '/state.json', '[]'); return send({ ok: true }); }
+  r.writeHead(404); r.end();
+}).listen(3410, '127.0.0.1');
+Y
+echo '[]' > "$t/state.json"
+node "$t/yep.cjs" "$t" & ypid=$!
+
+#  A fake session in a fake project, inside the throwaway home folder.
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"Hello test title"}}' > "$t/home/.claude/projects/-t-proj/aaa.jsonl"
+echo x > "$t/home/.claude/projects/-t-proj/aaa/part.txt"
+
+HOME="$t/home" USERPROFILE="$t/home" PATH="$t/bin:$PATH" CA_SIDECAR_TOKEN="$key" CA_SIDECAR_PORT=3415 CA_YEP_URL=http://127.0.0.1:3410 CA_POLL_MS=400 CA_UPKEEP_HOURS=0 \
+  node "$sidecar" > "$t/sidecar.log" 2>&1 & spid=$!
+sleep 2
+u=http://127.0.0.1:3415
+code() { curl -s -o /dev/null -w '%{http_code}' -m 6 "$@"; }
+expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (wanted $3, got $2)"; fi; }
+auth=(-H "Authorization: Bearer $key")
+
+#  Who may talk to it.
+expect "status-with-key"        "$(code "${auth[@]}" $u/status)" 200
+expect "no-key-refused"         "$(code $u/status)" 401
+expect "wrong-key-refused"      "$(code -H 'Authorization: Bearer nope' $u/status)" 401
+expect "web-page-refused"       "$(code "${auth[@]}" -H 'Origin: http://evil.example' $u/status)" 403
+expect "wrong-host-refused"     "$(code "${auth[@]}" -H 'Host: evil.example' $u/status)" 403
+
+#  The list of sessions that could be moved to the trash.
+if curl -s -m 6 "${auth[@]}" $u/sessions | grep -q '"title":"Listed title"' ; then echo "PASS sessions-list"; else echo "FAIL sessions-list"; fi
+
+#  Trash: move, list, restore, and the refusals.
+body='{"dir":"-t-proj","sessionId":"aaa"}'
+expect "trash-move"             "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/move)" 200
+if [ -f "$t/home/.claude/trash/-t-proj/aaa.jsonl" ] && [ -f "$t/home/.claude/trash/-t-proj/aaa/part.txt" ] && [ ! -e "$t/home/.claude/projects/-t-proj/aaa.jsonl" ]; then echo "PASS trash-files-moved"; else echo "FAIL trash-files-moved"; fi
+if curl -s -m 6 "${auth[@]}" $u/trash | grep -q 'Hello test title'; then echo "PASS trash-list-with-title"; else echo "FAIL trash-list-with-title"; fi
+expect "trash-move-twice-404"   "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/move)" 404
+expect "bad-name-refused"       "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d '{"dir":"../x","sessionId":"aaa"}' $u/trash/move)" 400
+if grep -q 'aaa/metadata {"archived":true}' "$t/metadata.log" 2>/dev/null; then echo "PASS yep-told-session-hidden"; else echo "FAIL yep-told-session-hidden"; fi
+expect "trash-restore"          "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/restore)" 200
+if [ -f "$t/home/.claude/projects/-t-proj/aaa.jsonl" ] && [ -f "$t/home/.claude/projects/-t-proj/aaa/part.txt" ]; then echo "PASS restore-files-back"; else echo "FAIL restore-files-back"; fi
+if grep -q 'aaa/metadata {"archived":false}' "$t/metadata.log" 2>/dev/null; then echo "PASS yep-told-session-shown"; else echo "FAIL yep-told-session-shown"; fi
+expect "restore-twice-404"      "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/restore)" 404
+#  The same session can be named by Yep's own project id (the pretend Yep knows project PID as the folder -t-proj).
+expect "trash-move-by-project-id" "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d '{"projectId":"PID","sessionId":"aaa"}' $u/trash/move)" 200
+expect "restore-by-project-id"    "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d '{"projectId":"PID","sessionId":"aaa"}' $u/trash/restore)" 200
+expect "unknown-project-refused"  "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d '{"projectId":"NOPE","sessionId":"aaa"}' $u/trash/move)" 400
+
+#  A session the user had archived comes back archived: restore puts back the state from before the trash, not simply "shown".
+touch "$t/archived.flag"
+expect "trash-move-archived"    "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/move)" 200
+if curl -s -m 6 "${auth[@]}" $u/trash | grep -q 'Hello test title'; then echo "PASS trash-list-with-remembered-state"; else echo "FAIL trash-list-with-remembered-state"; fi
+rm -f "$t/archived.flag"
+expect "restore-archived"       "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/restore)" 200
+if [ "$(grep 'aaa/metadata' "$t/metadata.log" | tail -1 | grep -c '{"archived":true}')" = "1" ]; then echo "PASS restore-keeps-archived"; else echo "FAIL restore-keeps-archived"; fi
+
+#  A running session is stopped first (the pretend Yep forgets it when asked to abort).
+echo '[{"id":"p1","sessionId":"aaa","projectId":"PID","projectName":"proj","sessionTitle":"Test","state":"in-turn"}]' > "$t/state.json"
+expect "trash-stops-running"    "$(code "${auth[@]}" -X POST -H 'Content-Type: application/json' -d "$body" $u/trash/move)" 200
+if [ "$(cat "$t/state.json")" = "[]" ]; then echo "PASS running-session-aborted"; else echo "FAIL running-session-aborted"; fi
+sleep 1
+: > "$NOTIFY_LOG"
+
+#  Notifications: waiting, answered, finished, and ended while working.
+proc() { echo "[{\"id\":\"p1\",\"sessionId\":\"s1\",\"projectId\":\"PID\",\"projectName\":\"proj\",\"sessionTitle\":\"My task\",\"state\":\"$1\"}]" > "$t/state.json"; sleep 1.5; }
+proc in-turn
+if [ ! -s "$NOTIFY_LOG" ]; then echo "PASS no-notice-while-working"; else echo "FAIL no-notice-while-working"; fi
+proc waiting-input
+if grep -q 'needs your approval' "$NOTIFY_LOG" && grep -q 'My task' "$NOTIFY_LOG" && grep -q -- '--alert-once' "$NOTIFY_LOG" && grep -q '/projects/PID/sessions/s1' "$NOTIFY_LOG"; then echo "PASS notice-waiting"; else echo "FAIL notice-waiting"; fi
+proc in-turn
+if grep -q '^REMOVE' "$NOTIFY_LOG"; then echo "PASS notice-removed-when-answered"; else echo "FAIL notice-removed-when-answered"; fi
+proc idle
+#  Waits up to 6 seconds for a notice, because a busy phone can be slower than the 400 ms polling suggests.
+waitfor() { for _ in $(seq 1 30); do grep -q "$1" "$NOTIFY_LOG" && return 0; sleep 0.2; done; return 1; }
+if waitfor 'Claude finished'; then echo "PASS notice-finished"; else echo "FAIL notice-finished"; fi
+: > "$NOTIFY_LOG"
+proc in-turn; echo '[]' > "$t/state.json"; sleep 1.5
+if waitfor 'ended unexpectedly'; then echo "PASS notice-ended-while-working"; else echo "FAIL notice-ended-while-working"; fi
+: > "$NOTIFY_LOG"
+proc idle; echo '[]' > "$t/state.json"; sleep 1.5
+if [ ! -s "$NOTIFY_LOG" ]; then echo "PASS quiet-when-idle-session-ends"; else echo "FAIL quiet-when-idle-session-ends"; fi
+
+kill "$spid" "$ypid" 2>/dev/null; wait 2>/dev/null
+rm -rf "$t"

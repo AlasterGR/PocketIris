@@ -1,0 +1,11 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Keep Claude Remote Control running, so sessions started from the Claude desktop app, claude.ai/code or the
+# Claude mobile app can use this phone (folder ~/pocket, which must be trusted once: cd ~/pocket && claude).
+#  Do nothing if Remote Control already runs.
+pgrep -f '[c]laude.* remote-control' >/dev/null && exit 0
+#  Stop quietly if the working folder cannot be created.
+mkdir -p "$HOME/pocket" && cd "$HOME/pocket" || exit 1
+#  Name this phone the way Android calls it (for example "POCO F5"), falling back to the model number, then to a plain word.
+name=$(getprop ro.product.marketname 2>/dev/null)
+[ -n "$name" ] || name=$(getprop ro.product.model 2>/dev/null)
+nohup "$PREFIX/bin/claude" remote-control --name "${name:-Android phone}" --permission-mode acceptEdits >> "$HOME/rc.log" 2>&1 < /dev/null &

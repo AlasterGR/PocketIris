@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Restart the terminal server so new options apply.
+pkill -x ttyd; sleep 1
+bash "$HOME/bin/ca-term"
+sleep 2; pgrep -a ttyd | cut -c1-120

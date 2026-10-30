@@ -1,0 +1,36 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Make new chat sessions start in "accept edits", once, through the server's own settings file (no patch in the chat engine).
+# Run by ca-start before the server starts. Never overrides a default the user has chosen, and never touches a file in an unknown format.
+f="$HOME/.yep-anywhere/server-settings.json"
+mkdir -p "$HOME/.yep-anywhere"
+node - "$f" <<'JS'
+const fs = require("fs");
+const file = process.argv[2];
+let data = null;
+//  Read the settings file if there is one; a missing file means we start a fresh one.
+try {
+  data = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch (error) {
+  //  Leave the file alone when it exists but cannot be read, because guessing could damage the user's settings.
+  if (error.code !== "ENOENT") {
+    console.log("ca-defaults: settings file not readable, left alone");
+    process.exit(0);
+  }
+  data = { version: 2, settings: {} };
+}
+//  Only handle the settings format this script knows (version 2); anything else is left untouched.
+if (data.version !== 2 || typeof data.settings !== "object" || data.settings === null) {
+  console.log("ca-defaults: unknown settings format, left alone");
+  process.exit(0);
+}
+const defaults = data.settings.newSessionDefaults || {};
+//  Respect a permission mode that is already saved, whether chosen by the user or set by this script earlier.
+if (defaults.permissionMode) {
+  console.log("ca-defaults: permission mode already set (" + defaults.permissionMode + ")");
+  process.exit(0);
+}
+defaults.permissionMode = "acceptEdits";
+data.settings.newSessionDefaults = defaults;
+fs.writeFileSync(file, JSON.stringify(data, null, 2));
+console.log("ca-defaults: new sessions now start in accept edits");
+JS

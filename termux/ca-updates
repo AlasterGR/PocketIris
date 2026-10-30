@@ -1,0 +1,204 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# PocketIris updates: find out what is newer, tell the user once, and install only when they press Update on the PocketIris page.
+#   ca-updates check claude|yep|pkgs   find out what is available now (Claude Code: at every server start)
+#   ca-updates check due               Yep and Termux packages, when their monthly check is due (the sidecar asks daily)
+#   ca-updates run claude|yep|pkgs     install it, check health, roll back on failure (the app asks the user first)
+#   ca-updates hold-launcher           stop the Claude launcher from updating by itself, so updates come only from the button
+#   ca-updates status                  print the state the app shows (also in /sdcard/Documents/ca/updates.json)
+# Every step is logged in ~/ca-updates.log. Test overrides: CA_UPDATES_STATE, CA_UPDATES_LOG, CA_CLAUDE_TAGS_URL, CA_YEP_LATEST_URL,
+# CA_UPDATES_NO_NET (skip "pkg update"), CA_UPDATES_FAIL_HEALTH (pretend the health check failed).
+set -u
+#  ~/bin comes last, so a command chosen deliberately earlier in the PATH (for example by a test) is the one used.
+export PATH="$PATH:$HOME/bin"
+STATE="${CA_UPDATES_STATE:-/sdcard/Documents/ca/updates.json}"
+COMPAT="${CA_COMPAT:-/sdcard/Documents/ca/compat.json}"
+LOG="${CA_UPDATES_LOG:-$HOME/ca-updates.log}"
+VERSIONS="${CA_CLAUDE_VERSIONS:-$HOME/.local/share/claude/versions}"
+TAGS_URL="${CA_CLAUDE_TAGS_URL:-https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags}"
+YEP_URL="${CA_YEP_LATEST_URL:-https://registry.npmjs.org/yepanywhere/latest}"
+YEP_DIR="$HOME/ya-android"
+APP=io.github.alastergr.pocketiris
+MONTH=$((30 * 86400))
+
+#  Writes one line to the screen and to the log.
+say() { echo "$*"; echo "[$(date '+%F %T')] $*" >> "$LOG"; }
+#  Sets one or more dotted keys in the state file (st key value key value ...); "null" clears a key. Written whole and renamed, never half.
+st() {
+  node -e '
+    const fs = require("fs"), f = process.argv[1]; let s = {};
+    try { s = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { s = {}; }
+    const a = process.argv.slice(2);
+    for (let i = 0; i + 1 < a.length; i += 2) {
+      const p = a[i].split("."); let o = s;
+      for (const k of p.slice(0, -1)) o = o[k] = (o[k] && typeof o[k] === "object") ? o[k] : {};
+      o[p[p.length - 1]] = a[i + 1] === "null" ? null : a[i + 1];
+    }
+    fs.writeFileSync(f + ".new", JSON.stringify(s, null, 1)); fs.renameSync(f + ".new", f);' "$STATE" "$@"
+}
+#  Reads one dotted key from the state file (empty when missing).
+sg() { node -e 'try { let o = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); for (const k of process.argv[2].split(".")) o = o == null ? o : o[k]; process.stdout.write(o == null ? "" : String(o)); } catch (e) {}' "$STATE" "$1"; }
+#  True when version $1 is newer than version $2.
+newer() { [ -n "$1" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+#  Reads one field of a JSON answer from a web address (or file:// for tests).
+fetch_json() { curl -fsSL --max-time 10 "$1" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s)[process.argv[1]];if(typeof v==="string"&&/^\d+\.\d+\.\d+$/.test(v))process.stdout.write(v)}catch(e){}})' "$2"; }
+yep_installed() { node -p "require('$YEP_DIR/node_modules/yepanywhere/package.json').version" 2>/dev/null; }
+#  Tells the user once per new version; a tap opens the PocketIris page, where the Update button is.
+notify() {
+  [ "$(sg "$1.notified")" = "$2" ] && return 0
+  termux-notification --id "pc-update-$1" --title "$3" --content "$4 Open PocketIris > Updates to install it." \
+    --action "am start -n $APP/$APP.MainActivity --es cmd pocketiris" > /dev/null 2>&1
+  st "$1.notified" "$2"
+}
+#  Waits up to 60 seconds for the chat server to answer.
+server_up() { for _ in $(seq 1 30); do [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:3400/)" = 200 ] && return 0; sleep 2; done; return 1; }
+#  Records the versions now installed as known-good in the phone's copy of compat.json (the PC's smoke test copies them back).
+mark_good() {
+  ca-versions > /dev/null 2>&1
+  COMPAT="$COMPAT" VERS="$HOME/pocketiris-versions.json" PKGS="$(dpkg-query -W -f='${Package}=${Version}\n' 2>/dev/null)" node -e '
+    const fs = require("fs"); const c = JSON.parse(fs.readFileSync(process.env.COMPAT, "utf8")); const v = JSON.parse(fs.readFileSync(process.env.VERS, "utf8"));
+    const p = Object.fromEntries(process.env.PKGS.split("\n").filter(Boolean).map((l) => l.split("=")));
+    for (const k of ["claudeCode", "node", "npm", "yep", "ttyd", "openssh"]) if (v[k]) c.knownGood[k] = v[k];
+    if (v.yep) c.knownGood.yepOfficial = v.yep + " (npm package, installed unchanged)";
+    for (const k of Object.keys(c.knownGood.termuxPackages || {})) if (p[k]) c.knownGood.termuxPackages[k] = p[k];
+    c.recordedOn = new Date().toISOString().slice(0, 10); c.recordedBy = "phone (" + process.argv[1] + " update)";
+    fs.writeFileSync(process.env.COMPAT + ".new", JSON.stringify(c, null, 2) + "\n"); fs.renameSync(process.env.COMPAT + ".new", process.env.COMPAT);' "$1"
+}
+#  Finishes a run: the result the page shows, and the lock released.
+finish() { st running null "last.what" "$1" "last.ok" "$2" "last.text" "$3" "last.at" "$(date +%s)"; say "$3"; rmdir "$HOME/.ca-updates.lock" 2>/dev/null; }
+
+check_claude() {
+  local inst ch avail
+  #  Claude Code follows Anthropic's stable releases only; Yep and the packages have a single stream each.
+  inst=$(ca-claude-version current 2>/dev/null); ch=stable
+  avail=$(fetch_json "$TAGS_URL" "$ch")
+  #  Without an answer from npm the old result stays; only the time of the try is new.
+  [ -n "$avail" ] || { st claude.installed "$inst" claude.channel "$ch" claude.triedAt "$(date +%s)"; say "Claude Code: npm did not answer."; return; }
+  st claude.installed "$inst" claude.channel "$ch" claude.available "$avail" claude.checkedAt "$(date +%s)"
+  #  Say so only when the newest stable release is newer than what runs.
+  if newer "$avail" "$inst"; then notify claude "$avail" "Claude Code $avail is available" "You have $inst."; fi
+  say "Claude Code: $inst installed, $avail newest stable release."
+}
+
+check_yep() {
+  local inst avail
+  inst=$(yep_installed); avail=$(fetch_json "$YEP_URL" version)
+  [ -n "$avail" ] || { st yep.installed "$inst" yep.triedAt "$(date +%s)"; say "Yep: npm did not answer."; return; }
+  st yep.installed "$inst" yep.available "$avail" yep.checkedAt "$(date +%s)"
+  #  Say so only for a newer release.
+  if newer "$avail" "$inst"; then notify yep "$avail" "Yep (chat server) $avail is available" "You have $inst."; fi
+  say "Yep: $inst installed, $avail newest."
+}
+
+check_pkgs() {
+  local list n glibc
+  #  Refresh the package list (downloads only the list) unless a test says not to.
+  [ -n "${CA_UPDATES_NO_NET:-}" ] || pkg update > /dev/null 2>&1
+  list=$(apt list --upgradable 2>/dev/null | grep upgradable | cut -d/ -f1)
+  n=$(printf '%s\n' "$list" | grep -c .); glibc=$(printf '%s\n' "$list" | grep -c glibc)
+  st pkgs.waiting "$n" pkgs.glibc "$glibc" pkgs.names "$(printf '%s\n' "$list" | head -8 | tr '\n' ' ')" pkgs.checkedAt "$(date +%s)"
+  #  Say so when anything waits; the count is the "version" remembered, so a bigger batch is told again.
+  if [ "$n" -gt 0 ]; then notify pkgs "$n" "$n Termux package updates are waiting" "$(printf '%s\n' "$list" | head -4 | tr '\n' ' ')"; fi
+  say "Termux packages: $n waiting ($glibc glibc)."
+}
+
+run_claude() {
+  local before after ch target
+  before=$(ca-claude-version current); target=$(sg claude.available)
+  newer "$target" "$before" || { finish claude false "Claude Code $before is already at or past the newest stable release ($target)."; return 1; }
+  say "Updating Claude Code from $before to the stable release $target."
+  #  The same steps the launcher takes: official download, release-manifest checksum, loader patch, test start; then it runs from the next start.
+  ca-claude-version install "$target" >> "$LOG" 2>&1
+  hold_launcher
+  after=$(ca-claude-version current)
+  #  Nothing new runs: the download or its checks failed, and the old version simply stays.
+  [ "$after" != "$before" ] || { finish claude false "Claude Code was not updated; $before still runs (details in ~/ca-updates.log)."; return 1; }
+  ca-claude-version guard >> "$LOG" 2>&1
+  #  The guard sets a version aside when it breaks PocketIris; then the previous one runs again.
+  if [ "$(ca-claude-version current)" != "$after" ]; then finish claude false "Claude Code $after failed PocketIris's check and was set aside; $(ca-claude-version current) runs."; return 1; fi
+  mark_good claude; check_claude > /dev/null
+  finish claude true "Claude Code updated from $before to $after; new sessions use it."
+}
+
+run_yep() {
+  local before target stamp backup old
+  before=$(yep_installed); target=$(sg yep.available); stamp=$(date +%Y%m%d-%H%M)
+  newer "$target" "$before" || [ -n "${CA_UPDATES_YEP_TARGET:-}" ] || { finish yep false "Yep $before is already the newest."; return 1; }
+  target="${CA_UPDATES_YEP_TARGET:-$target}"
+  say "Updating Yep from $before to $target."
+  #  1. Save the data, because a new version may change it and an old one cannot read it back.
+  mkdir -p /sdcard/_Review/backups /sdcard/_Review/old-yep-tarballs
+  backup="/sdcard/_Review/backups/pre-yep-update-$stamp.tar.gz"
+  tar czf "$backup" -C "$HOME" .yep-anywhere || { finish yep false "Could not save Yep's data first; nothing was changed."; return 1; }
+  #  2. The official package; npm checks it against the registry's checksum.
+  ( cd /sdcard/Documents && npm pack "yepanywhere@$target" --pack-destination /sdcard/Documents >> "$LOG" 2>&1 ) && [ -f "/sdcard/Documents/yepanywhere-$target.tgz" ] \
+    || { finish yep false "Could not download Yep $target; nothing was changed."; return 1; }
+  #  3. Only the new package stays where ca-update looks; older ones go to the review folder (the previous one is kept for a rollback).
+  for old in /sdcard/Documents/yepanywhere-*.tgz; do [ "$old" = "/sdcard/Documents/yepanywhere-$target.tgz" ] || mv -f "$old" /sdcard/_Review/old-yep-tarballs/; done
+  bash "$HOME/bin/ca-update" >> "$LOG" 2>&1
+  #  4. Health: the server answers and runs exactly the new version (a test can pretend this failed).
+  if [ -z "${CA_UPDATES_FAIL_HEALTH:-}" ] && server_up && [ "$(yep_installed)" = "$target" ]; then
+    mark_good yep; check_yep > /dev/null
+    finish yep true "Yep updated from $before to $target. Data saved before in $backup."
+    return 0
+  fi
+  #  5. Roll back code and data together.
+  say "Yep $target failed its health check; rolling back to $before."
+  pkill -f '[y]epanywhere/dist/cli.js'; sleep 2
+  mv "$HOME/.yep-anywhere" "/sdcard/_Review/backups/yep-data-from-failed-$target-$stamp" && tar xzf "$backup" -C "$HOME"
+  mv -f "/sdcard/Documents/yepanywhere-$target.tgz" /sdcard/_Review/old-yep-tarballs/
+  #  The previous package comes back from the review folder, or from npm when it is not there.
+  if [ -f "/sdcard/_Review/old-yep-tarballs/yepanywhere-$before.tgz" ]; then mv -f "/sdcard/_Review/old-yep-tarballs/yepanywhere-$before.tgz" /sdcard/Documents/
+  else ( cd /sdcard/Documents && npm pack "yepanywhere@$before" --pack-destination /sdcard/Documents >> "$LOG" 2>&1 ); fi
+  bash "$HOME/bin/ca-update" >> "$LOG" 2>&1
+  #  Say whether the rollback itself worked, because then the user knows where things stand.
+  if server_up && [ "$(yep_installed)" = "$before" ]; then finish yep false "Yep $target failed its health check; $before and its data are back and working."
+  else finish yep false "Yep $target failed AND the rollback did not come up; data saved in $backup. Run ca-status in the Terminal."; fi
+  return 1
+}
+
+run_pkgs() {
+  local out
+  say "Upgrading Termux packages."
+  out=$(echo yes | bash /sdcard/Documents/ca/scripts/pkg-upgrade.sh 2>&1); printf '%s\n' "$out" >> "$LOG"
+  #  Say so plainly when nothing was waiting, and leave the server alone.
+  if printf '%s' "$out" | grep -q 'Nothing to upgrade'; then check_pkgs > /dev/null; finish pkgs true "No Termux package updates were waiting; nothing was changed."; return 0; fi
+  #  The chat server keeps running on the old Node until restarted.
+  ca-restart >> "$LOG" 2>&1
+  #  Health: the server answers again (packages cannot be rolled back; the snapshot says what changed).
+  if [ -z "${CA_UPDATES_FAIL_HEALTH:-}" ] && server_up; then
+    mark_good pkgs; check_pkgs > /dev/null
+    finish pkgs true "Termux packages upgraded; the chat server restarted and answers. What changed: /sdcard/_Review/backups/pkg-*.txt"
+  else finish pkgs false "Termux packages upgraded but the chat server does not answer; run ca-status and ca-logs in the Terminal."; return 1; fi
+}
+
+#  The launcher checks for "latest" once a day on any start of Claude; a "last checked" time far in the future keeps it from ever doing that.
+hold_launcher() { [ -d "$VERSIONS" ] && touch -d '2100-01-01' "$VERSIONS/.last-update-check" 2>/dev/null; return 0; }
+
+case "${1:-status}" in
+  check)
+    case "${2:-}" in
+      claude) check_claude ;;
+      yep) check_yep ;;
+      pkgs) check_pkgs ;;
+      due)
+        hold_launcher
+        #  Yep and the packages are looked at once a month (counted from the last successful check).
+        last=$(sg yep.checkedAt); [ $(( $(date +%s) - ${last:-0} )) -ge $MONTH ] && check_yep
+        last=$(sg pkgs.checkedAt); [ $(( $(date +%s) - ${last:-0} )) -ge $MONTH ] && check_pkgs
+        ;;
+      *) echo "check claude|yep|pkgs|due"; exit 1 ;;
+    esac
+    ;;
+  run)
+    what="${2:-}"
+    case "$what" in claude|yep|pkgs) ;; *) echo "run claude|yep|pkgs"; exit 1 ;; esac
+    #  One update at a time; a lock older than 30 minutes belongs to a run that died.
+    find "$HOME/.ca-updates.lock" -maxdepth 0 -mmin +30 -exec rmdir {} \; 2>/dev/null
+    mkdir "$HOME/.ca-updates.lock" 2>/dev/null || { echo "Another update is running."; exit 1; }
+    st running "$what" runningSince "$(date +%s)"
+    "run_$what"
+    ;;
+  hold-launcher) hold_launcher ;;
+  status) cat "$STATE" 2>/dev/null || echo '{}' ;;
+  *) sed -n '2,10p' "$0"; exit 1 ;;
+esac

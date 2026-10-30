@@ -1,0 +1,18 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# What the in-app terminal starts for each connection.
+#   (no args)    a normal shell in $HOME
+#   run NAME     run /sdcard/Documents/ca/scripts/NAME, then leave a shell open
+#   cd DIR       a shell in DIR
+export PATH="$HOME/bin:$PATH"
+cd "$HOME"
+#  Do what the first argument asks: run a script, or start in a folder.
+case "$1" in
+  run)
+    #  Run the script only when its name is a plain file name.
+    case "$2" in
+      ''|*[!A-Za-z0-9._-]*) echo "Not a valid script name." ;;
+      *) echo "▶ $2"; echo; bash "/sdcard/Documents/ca/scripts/$2"; rc=$?; echo; echo "[finished, exit code $rc]" ;;
+    esac ;;
+  cd) [ -d "$2" ] && cd "$2" ;;
+esac
+exec bash -l

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PocketIris</title>
+<!--TOKENS-->
+<!--CSS-->
+</head>
+<body class="pc-root ui-effective-phone text-scale-normal">
+<div class="page">
+  <!-- Shown only while an installed version differs from the tested set (the tab's title is in the app's own header row) -->
+  <p class="notice" id="versionBanner" hidden></p>
+
+  <div class="grid">
+    <!-- Safety: the things that let Claude act on the phone -->
+    <details class="card" id="safety" open>
+      <summary><h2>Safety</h2></summary>
+      <div class="row">
+        <div class="info">
+          <strong>Trusted session</strong>
+          <p class="muted" id="trustText">Off.</p>
+          <p class="muted">For 30 minutes Claude can open new websites, control apps and take screenshots without asking each time. It still asks before downloads, private addresses and changes to safety settings.</p>
+        </div>
+        <button class="btn primary" id="trustButton" type="button">Start</button>
+      </div>
+      <div class="row">
+        <div class="info">
+          <strong>Phone control</strong>
+          <p class="muted">Lets Claude read the screen and tap, type and scroll in apps you approve one by one.</p>
+          <p class="reason" id="controlReason" hidden></p>
+        </div>
+        <button class="switch" id="switchControl" type="button" role="switch" aria-checked="false"><span class="knob"></span></button>
+      </div>
+      <div class="row">
+        <div class="info">
+          <strong>Fingerprint touch allows</strong>
+          <p class="muted">While a question is open, touching the fingerprint sensor counts as Allow.</p>
+        </div>
+        <button class="switch" id="switchFingerprint" type="button" role="switch" aria-checked="false"><span class="knob"></span></button>
+      </div>
+    </details>
+
+    <!-- Appearance: where the bar sits, how the screens lay out, how big the text is -->
+    <details class="card" id="appearance" open>
+      <summary><h2>Appearance</h2></summary>
+      <div class="field">
+        <strong>Navigation bar</strong>
+        <div class="segmented" id="segNav" role="group" aria-label="Navigation bar position">
+          <button type="button" data-value="top">Top, always visible</button>
+          <button type="button" data-value="bottom">Bottom, hides with the keyboard</button>
+        </div>
+      </div>
+      <div class="field">
+        <strong>Layout</strong>
+        <div class="segmented" id="segLayout" role="group" aria-label="Layout">
+          <button type="button" data-value="auto">Auto</button>
+          <button type="button" data-value="phone">Phone</button>
+          <button type="button" data-value="tablet">Tablet</button>
+          <button type="button" data-value="desktop">Desktop</button>
+        </div>
+        <p class="muted" id="layoutText"></p>
+      </div>
+      <div class="field">
+        <strong>Text size</strong>
+        <div class="segmented" id="segText" role="group" aria-label="Text size">
+          <button type="button" data-value="normal">Normal</button>
+          <button type="button" data-value="large">Large</button>
+          <button type="button" data-value="very-large">Very large</button>
+          <button type="button" data-value="huge">Huge</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- Sessions: clean up the chat's session list; nothing is erased -->
+    <details class="card" id="sessions" open>
+      <summary><h2>Sessions</h2></summary>
+      <div class="segmented" id="segSessions" role="group" aria-label="Sessions view">
+        <button type="button" data-value="live">Move to trash</button>
+        <button type="button" data-value="trash" id="trashTab">In trash</button>
+      </div>
+      <p class="muted" id="sessionsHelp"></p>
+      <div id="sessionsList" class="list"></div>
+      <div class="actions">
+        <button class="btn primary" id="moveButton" type="button">Move to trash</button>
+        <p class="reason" id="moveReason"></p>
+      </div>
+      <div class="notice" id="undoBar" hidden>
+        <span id="undoText"></span>
+        <button class="btn" id="undoButton" type="button">Undo</button>
+      </div>
+      <p class="muted">Moving to trash keeps every file and can be undone. Archive (in the chat) only hides a session.</p>
+    </details>
+
+    <!-- Updates: what is newer; nothing installs until the user presses Update -->
+    <details class="card" id="updates" open>
+      <summary><h2>Updates</h2></summary>
+      <p class="muted">Claude Code (stable releases) is checked at every start; the chat server, the Termux packages and the Termux apps once a month. You get one notice when something is new; nothing installs until you press Update. Each name opens its project page.</p>
+      <div class="row" id="upd-claude">
+        <div class="info">
+          <button class="title-link" type="button" data-project="claude">Claude Code</button>
+          <p class="muted" data-line></p>
+        </div>
+        <button class="btn" type="button" data-act>Check now</button>
+      </div>
+      <div class="row" id="upd-yep">
+        <div class="info">
+          <button class="title-link" type="button" data-project="yep">Chat server (Yep Anywhere)</button>
+          <p class="muted" data-line></p>
+        </div>
+        <button class="btn" type="button" data-act>Check now</button>
+      </div>
+      <div class="row" id="upd-pkgs">
+        <div class="info">
+          <button class="title-link" type="button" data-project="pkgs">Termux packages</button>
+          <p class="muted" data-line></p>
+        </div>
+        <button class="btn" type="button" data-act>Check now</button>
+      </div>
+      <div class="row" id="upd-apps">
+        <div class="info">
+          <button class="title-link" type="button" data-project="apps">Termux apps</button>
+          <p class="muted" data-line></p>
+        </div>
+        <button class="btn" type="button" data-act>Check now</button>
+      </div>
+      <p class="notice" id="updResult" hidden></p>
+    </details>
+
+    <!-- Developer: only for working on PocketIris itself, closed by default -->
+    <details class="card wide" id="developer">
+      <summary><h2>Developer</h2></summary>
+      <p class="muted" id="aboutLine">Version</p>
+      <div class="field">
+        <strong>Connect to another device by</strong>
+        <div class="row">
+          <div class="info">
+            <strong>Cable</strong>
+            <p class="muted" id="cableText"></p>
+          </div>
+          <button class="switch" id="switchCable" type="button" role="switch" aria-checked="false" aria-label="Cable"><span class="knob"></span></button>
+        </div>
+        <div class="subfield">
+          <strong>Wirelessly</strong>
+          <select class="select" id="linkSelect" aria-label="Connect wirelessly">
+            <option value="off">Off</option>
+            <option value="wifi">Wi-Fi</option>
+            <option value="wifibt">Wi-Fi and Bluetooth</option>
+            <option value="bt">Bluetooth only</option>
+          </select>
+          <p class="muted" id="linkText"></p>
+          <p class="reason" id="linkReason" hidden></p>
+        </div>
+        <p class="muted">The two ways work independently. If you pull the cable or switch it Off while a wireless link is on, the wireless link keeps running and the PC tools use it.</p>
+      </div>
+      <div class="row">
+        <div class="info">
+          <strong>Page debugging from the PC</strong>
+          <p class="muted">Lets a PC inspect and drive the chat page. Turn it off when you are not developing.</p>
+        </div>
+        <button class="switch" id="switchDebug" type="button" role="switch" aria-checked="false"><span class="knob"></span></button>
+      </div>
+      <div class="field">
+        <strong>Android settings shortcuts</strong>
+        <select class="select" id="settingsSelect" aria-label="Open an Android settings page">
+          <option value="">Choose a page…</option>
+          <option value="bluetooth">Bluetooth settings (pair the PC once)</option>
+          <option value="tether">Tethering settings</option>
+          <option value="developer">Developer options (Wireless debugging)</option>
+          <option value="accessibility">Accessibility settings (phone control)</option>
+        </select>
+      </div>
+      <div class="field">
+        <strong>Self-tests</strong>
+        <p class="muted">Quick tests of the app's safety features. They only show test dialogs; nothing is downloaded or changed.</p>
+        <div id="tests" class="list"></div>
+      </div>
+    </details>
+  </div>
+</div>
+<!--JS-->
+</body>
+</html>

@@ -1,0 +1,17 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Prove that the Yep installed on the phone is the official package, unchanged: its checksum equals the one the npm registry states,
+# and none of PocketIris's own words appear inside it. Prints "PASS <name>" or "FAIL <name>".
+cd "$HOME/ya-android" || { echo "FAIL ya-android-folder"; exit 0; }
+version=$(node -p "require('./node_modules/yepanywhere/package.json').version" 2>/dev/null)
+lock=$(node -p "(require('./package-lock.json').packages['node_modules/yepanywhere']||{}).integrity" 2>/dev/null)
+registry=$(npm view "yepanywhere@$version" dist.integrity 2>/dev/null)
+
+#  The installed file's checksum (saved by npm when it installed) must equal the registry's.
+if [ -n "$lock" ] && [ "$lock" = "$registry" ]; then echo "PASS installed-yep-is-the-official-file ($version)"; else echo "FAIL installed-yep-is-the-official-file (version=$version lock=${lock:0:20} registry=${registry:0:20})"; fi
+
+#  Nothing of PocketIris may be inside Yep's program files.
+n=$(grep -rl "PocketIris\|CA_LOCAL_NOTIFY\|LocalNotifier\|pocketiris" node_modules/yepanywhere/dist 2>/dev/null | wc -l)
+if [ "$n" = "0" ]; then echo "PASS no-pocketiris-code-inside-yep"; else echo "FAIL no-pocketiris-code-inside-yep ($n files)"; fi
+
+#  The password library stand-in of the old days must be gone.
+if grep -q bcryptjs node_modules/bcrypt/index.js 2>/dev/null; then echo "FAIL official-bcrypt-untouched"; else echo "PASS official-bcrypt-untouched"; fi
